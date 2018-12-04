@@ -34,8 +34,7 @@ let diff a b =
   | _ -> failwith "error"
 
 (*
-ABCD
--> AB AC AD BC BD CD
+ABCD -> AB AC AD BC BD CD
 *)
 let combinations a =
   let rec aux1 acc1 lst =
@@ -47,25 +46,6 @@ let combinations a =
     | [] -> acc1 in
   aux1 [] a
 
-let combinations_exists a ~f =
-  let rec aux1 lst =
-    let rec aux2 hd = function
-      | x :: xs ->
-        if f hd x then
-          Some (hd, x)
-        else
-          aux2 hd xs
-      | [] -> None in
-    match lst with
-    | x :: xs ->
-      begin
-      match aux2 x xs with
-      | Some x -> Some x
-      | None -> aux1 xs
-      end
-    | [] -> None in
-  aux1 a
-
 let combinations_exists' a ~f =
   List.find_exn ~f:f a
 
@@ -73,11 +53,9 @@ let part_1 lines =
   let twos, threes = List.fold ~init:(0, 0) ~f:checksum lines in
   twos * threes
 
-(* alternative with dumb list *)
 let part_2 lines =
   let a, b = combinations_exists' (combinations lines) ~f:(fun x -> let a, b = x in diff a b = 1) in
   a ^ " " ^ b
-
 
 let () =
   let raw_lines = List.map ~f:String.strip (In_channel.read_lines file) in
