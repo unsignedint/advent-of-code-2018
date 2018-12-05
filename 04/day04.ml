@@ -54,96 +54,76 @@ let compare_timestamp a b =
 let sorted_entries entries =
   List.sort ~compare:(fun a b -> compare_timestamp a.timestamp b.timestamp) entries
 
-type daily_record = int * bool array
+type daily_record = int * int array
 
-let set_region_on_array ary a b =
+let bump_region_on_array ary a b =
   for i = a to b-1 do
-    ary.(i) <- true
+    ary.(i) <- ary.(i) + 1
   done
 
-let print_ary a =
-  for i=0 to (Array.length a)-1 do
-    printf "%s" (if a.(i) then "#" else ".")
+let print_pe k v =
+  printf "(%d) " k ;
+  for i=0 to (Array.length v)-1 do
+    printf "%d" (if v.(i) < 10 then v.(i) else 9)
   done ; printf "\n"
 
-let print_pe pe =
-  printf "(%d) " (fst pe) ;
-  print_ary (snd pe)
-
 let process_entries entries =
-  let rec aux acc a cur_guard cur_state curr_min = function
+  let rec aux acc' cur_guard cur_state curr_min lst =
+    let a = match Map.find acc' cur_guard with
+      | None -> Array.create ~len:60 0
+      | Some v -> v in
+    let acc = Map.set acc' ~key:cur_guard ~data:a in
+    match lst with
     | [] -> begin
       match cur_state with
         | Indeterminate -> failwith "nope"
-        | Asleep -> set_region_on_array a curr_min 60 ; ((cur_guard, a) :: acc)
-        | Awake -> ((cur_guard, a) :: acc) end
+        | Asleep -> bump_region_on_array a curr_min 60 ; acc
+        | Awake -> acc end
     | x :: xs ->
       match cur_state, x.state with
-      | Indeterminate, Start g ->
-        (* first start! *)
-        aux acc (Array.create ~len:60 false) g Awake x.timestamp.min xs
-      | Asleep, Start g ->
-        (* end of past shift *)
-        set_region_on_array a curr_min 60 ;
-        aux ((cur_guard, a) :: acc) (Array.create ~len:60 false) g Awake x.timestamp.min xs
-      | Awake, Start g ->
-        (* end of past shift *)
-        aux ((cur_guard, a) :: acc) (Array.create ~len:60 false) g Awake x.timestamp.min xs
+      | Indeterminate, Start g -> (* first start! *)
+        aux acc g Awake x.timestamp.min xs
+      | Asleep, Start g -> (* end of past shift *)
+        bump_region_on_array a curr_min 60 ;
+        aux acc g Awake x.timestamp.min xs
+      | Awake, Start g -> (* end of past shift *)
+        aux acc g Awake x.timestamp.min xs
       | Awake, Asleep ->
-        aux acc a cur_guard Asleep x.timestamp.min xs
+        aux acc cur_guard Asleep x.timestamp.min xs
       | Asleep, Awake ->
-        set_region_on_array a curr_min x.timestamp.min ;
-        aux acc a cur_guard Awake x.timestamp.min xs
+        bump_region_on_array a curr_min x.timestamp.min ;
+        aux acc cur_guard Awake x.timestamp.min xs
       | _, s -> failwith ("oops! " ^ (string_of_state s))
   in
-  aux [] [||] (-1) Indeterminate 0 entries
+  let res = aux (Map.empty (module Int)) (-1) Indeterminate 0 entries in
+  Map.remove res (-1)
 
-module Counter = struct
-  type t = (int, int, Char.comparator_witness) Map.t
-  let empty = Map.empty (module Int)
-  let bump t c n =
-    let count =
-      match Map.find t c with
-      | None -> n
-      | Some x -> x + n
-    in
-    Map.set t ~key:c ~data:count
-  let touch t c = bump t c 1
-end
+let find_guard_with_most_sleep_mins m =
+  Map.fold m ~init:(0, 0) ~f:(fun ~key:k ~data:v acc ->
+      let total_mins_for_guard = Array.fold v ~init:0 ~f:(fun acc' x' -> acc' + x') in
+      if total_mins_for_guard > (snd acc) then (k, total_mins_for_guard)
+      else acc)
 
-let find_guard lst =
-  let rec aux acc = function
-    | x :: xs -> begin
-      let count = Array.count (snd x) ~f:(fun x -> x) in
-      aux (Counter.bump acc (fst x) count) xs
-    end
-    | [] -> acc in
-  let m = aux Counter.empty lst in
-  Map.fold m ~init:(0, 0) ~f:(fun ~key:k ~data:v acc -> if v > (snd acc) then (k, v) else acc)
+let find_most_asleep_min_for_guards m =
+  let empty = Map.empty (module Int) in
+  Map.fold m ~init:empty ~f:(fun ~key:k ~data:v acc ->
+      let highest_min = Array.foldi v ~init:(0, 0) ~f:(fun i acc' x' -> if x' > (snd acc') then (i, x') else acc') in
+      Map.set acc ~key:k ~data:highest_min)
 
-let find_minute lst guard =
-  let rows = List.filter lst ~f:(fun x -> (fst x) = guard) in
-  let rec aux acc = function
-    | x :: xs -> aux (Array.foldi ~init:acc ~f:(fun i acc' x' -> if x' then Counter.touch acc' i else acc') (snd x)) xs
-    | [] -> acc in
-  let m = aux Counter.empty rows in
-  Map.fold m ~init:(0, 0) ~f:(fun ~key:k ~data:v acc -> if v > (snd acc) then (k, v) else acc)
-
-let find_minute_for_all_guards lst guard =
-  let rows = List.filter lst ~f:(fun x -> (fst x) = guard) in
-  let rec aux acc = function
-    | x :: xs -> aux (Array.foldi ~init:acc ~f:(fun i acc' x' -> if x' then Counter.touch acc' i else acc') (snd x)) xs
-    | [] -> acc in
-  let m = aux Counter.empty rows in
-  Map.fold m ~init:(0, 0) ~f:(fun ~key:k ~data:v acc -> if v > (snd acc) then (k, v) else acc)
-
+let find_most_sleepy_guard_min m =
+  Map.fold m ~init:(0, 0, 0) ~f:(fun ~key:k ~data:v acc ->
+      let min, count = v in
+      let _, _, curr_count = acc in
+      if count > curr_count then k, min, count else acc)
 
 let () =
   let raw_lines = List.map ~f:String.strip (In_channel.read_lines file) in
   let entries = sorted_entries (List.map ~f:parse raw_lines) in
   List.iter ~f:print_entry entries ;
   let pes = process_entries entries in
-  List.iter ~f:print_pe pes ;
-  let guard, _ = find_guard pes in
-  let min, _ = find_minute pes guard in
-  printf "part1 = %d\n" (guard * min)
+  Map.iteri pes ~f:(fun ~key:k ~data:v -> print_pe k v) ;
+  let guard, _ = find_guard_with_most_sleep_mins pes in
+  let guard_high_mins = find_most_asleep_min_for_guards pes in
+  printf "part1 = %d\n" (guard * (fst (Map.find_exn guard_high_mins guard))) ;
+  let guard', min', _ = find_most_sleepy_guard_min guard_high_mins in
+  printf "part2 = %d\n" (guard' * min') ;
