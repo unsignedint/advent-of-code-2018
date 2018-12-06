@@ -1,4 +1,4 @@
-(* day 02 *)
+(* day 04 *)
 
 open Base
 open Stdio
